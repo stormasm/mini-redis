@@ -1,4 +1,15 @@
-# mini-redis
+#### Set up the server
+
+```rust
+crb mini-redis-server
+crb mini-redis-cli
+```
+
+#### Set up the blocking client
+
+```rust
+cre block01
+```
 
 `mini-redis` is an incomplete, idiomatic implementation of a
 [Redis](https://redis.io) client and server built with
