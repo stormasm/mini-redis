@@ -99,6 +99,7 @@ https://github.com/aws-observability/aws-otel-collector/blob/main/docs/developer
 
 `mini-redis` currently supports the following commands.
 
+* [PING](https://redis.io/commands/ping)
 * [GET](https://redis.io/commands/get)
 * [SET](https://redis.io/commands/set)
 * [PUBLISH](https://redis.io/commands/publish)
@@ -120,7 +121,7 @@ and spawns a new task per connection. It gracefully handles `accept` errors.
 
 ### Client library
 
-[`client.rs`](src/client.rs) shows how to model an asynchronous client. The
+[`client.rs`](src/clients/client.rs) shows how to model an asynchronous client. The
 various capabilities are exposed as `async` methods.
 
 ### State shared across sockets
@@ -164,7 +165,7 @@ implements this using one [broadcast channel][broadcast] per channel and a
 the server to update the active subscriptions.
 
 [broadcast]: https://docs.rs/tokio/*/tokio/sync/broadcast/index.html
-[`StreamMap`]: https://docs.rs/tokio/*/tokio/stream/struct.StreamMap.html
+[`StreamMap`]: https://docs.rs/tokio-stream/*/tokio_stream/struct.StreamMap.html
 
 ### Using a `std::sync::Mutex` in an async application
 

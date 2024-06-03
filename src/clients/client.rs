@@ -2,7 +2,7 @@
 //!
 //! Provides an async connect and methods for issuing the supported commands.
 
-use crate::cmd::{Get, Publish, Set, Subscribe, Unsubscribe};
+use crate::cmd::{Get, Ping, Publish, Set, Subscribe, Unsubscribe};
 use crate::{Connection, Frame};
 
 use async_stream::try_stream;
@@ -51,42 +51,77 @@ pub struct Message {
     pub content: Bytes,
 }
 
-/// Establish a connection with the Redis server located at `addr`.
-///
-/// `addr` may be any type that can be asynchronously converted to a
-/// `SocketAddr`. This includes `SocketAddr` and strings. The `ToSocketAddrs`
-/// trait is the Tokio version and not the `std` version.
-///
-/// # Examples
-///
-/// ```no_run
-/// use mini_redis::client;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let client = match client::connect("localhost:6379").await {
-///         Ok(client) => client,
-///         Err(_) => panic!("failed to establish connection"),
-///     };
-/// # drop(client);
-/// }
-/// ```
-///
-pub async fn connect<T: ToSocketAddrs>(addr: T) -> crate::Result<Client> {
-    // The `addr` argument is passed directly to `TcpStream::connect`. This
-    // performs any asynchronous DNS lookup and attempts to establish the TCP
-    // connection. An error at either step returns an error, which is then
-    // bubbled up to the caller of `mini_redis` connect.
-    let socket = TcpStream::connect(addr).await?;
-
-    // Initialize the connection state. This allocates read/write buffers to
-    // perform redis protocol frame parsing.
-    let connection = Connection::new(socket);
-
-    Ok(Client { connection })
-}
-
 impl Client {
+    /// Establish a connection with the Redis server located at `addr`.
+    ///
+    /// `addr` may be any type that can be asynchronously converted to a
+    /// `SocketAddr`. This includes `SocketAddr` and strings. The `ToSocketAddrs`
+    /// trait is the Tokio version and not the `std` version.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use mini_redis::clients::Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let client = match Client::connect("localhost:6379").await {
+    ///         Ok(client) => client,
+    ///         Err(_) => panic!("failed to establish connection"),
+    ///     };
+    /// # drop(client);
+    /// }
+    /// ```
+    ///
+    pub async fn connect<T: ToSocketAddrs>(addr: T) -> crate::Result<Client> {
+        // The `addr` argument is passed directly to `TcpStream::connect`. This
+        // performs any asynchronous DNS lookup and attempts to establish the TCP
+        // connection. An error at either step returns an error, which is then
+        // bubbled up to the caller of `mini_redis` connect.
+        let socket = TcpStream::connect(addr).await?;
+
+        // Initialize the connection state. This allocates read/write buffers to
+        // perform redis protocol frame parsing.
+        let connection = Connection::new(socket);
+
+        Ok(Client { connection })
+    }
+
+    /// Ping to the server.
+    ///
+    /// Returns PONG if no argument is provided, otherwise
+    /// return a copy of the argument as a bulk.
+    ///
+    /// This command is often used to test if a connection
+    /// is still alive, or to measure latency.
+    ///
+    /// # Examples
+    ///
+    /// Demonstrates basic usage.
+    /// ```no_run
+    /// use mini_redis::clients::Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mut client = Client::connect("localhost:6379").await.unwrap();
+    ///
+    ///     let pong = client.ping(None).await.unwrap();
+    ///     assert_eq!(b"PONG", &pong[..]);
+    /// }
+    /// ```
+    #[instrument(skip(self))]
+    pub async fn ping(&mut self, msg: Option<Bytes>) -> crate::Result<Bytes> {
+        let frame = Ping::new(msg).into_frame();
+        debug!(request = ?frame);
+        self.connection.write_frame(&frame).await?;
+
+        match self.read_response().await? {
+            Frame::Simple(value) => Ok(value.into()),
+            Frame::Bulk(value) => Ok(value),
+            frame => Err(frame.to_error()),
+        }
+    }
+
     /// Get the value of key.
     ///
     /// If the key does not exist the special value `None` is returned.
@@ -96,11 +131,11 @@ impl Client {
     /// Demonstrates basic usage.
     ///
     /// ```no_run
-    /// use mini_redis::client;
+    /// use mini_redis::clients::Client;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut client = client::connect("localhost:6379").await.unwrap();
+    ///     let mut client = Client::connect("localhost:6379").await.unwrap();
     ///
     ///     let val = client.get("foo").await.unwrap();
     ///     println!("Got = {:?}", val);
@@ -142,11 +177,11 @@ impl Client {
     /// Demonstrates basic usage.
     ///
     /// ```no_run
-    /// use mini_redis::client;
+    /// use mini_redis::clients::Client;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut client = client::connect("localhost:6379").await.unwrap();
+    ///     let mut client = Client::connect("localhost:6379").await.unwrap();
     ///
     ///     client.set("foo", "bar".into()).await.unwrap();
     ///
@@ -181,14 +216,14 @@ impl Client {
     /// favorable.
     ///
     /// ```no_run
-    /// use mini_redis::client;
+    /// use mini_redis::clients::Client;
     /// use tokio::time;
     /// use std::time::Duration;
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let ttl = Duration::from_millis(500);
-    ///     let mut client = client::connect("localhost:6379").await.unwrap();
+    ///     let mut client = Client::connect("localhost:6379").await.unwrap();
     ///
     ///     client.set_expires("foo", "bar".into(), ttl).await.unwrap();
     ///
@@ -246,11 +281,11 @@ impl Client {
     /// Demonstrates basic usage.
     ///
     /// ```no_run
-    /// use mini_redis::client;
+    /// use mini_redis::clients::Client;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut client = client::connect("localhost:6379").await.unwrap();
+    ///     let mut client = Client::connect("localhost:6379").await.unwrap();
     ///
     ///     let val = client.publish("foo", "bar".into()).await.unwrap();
     ///     println!("Got = {:?}", val);
@@ -297,7 +332,7 @@ impl Client {
     /// The core `SUBSCRIBE` logic, used by misc subscribe fns
     async fn subscribe_cmd(&mut self, channels: &[String]) -> crate::Result<()> {
         // Convert the `Subscribe` command into a frame
-        let frame = Subscribe::new(&channels).into_frame();
+        let frame = Subscribe::new(channels.to_vec()).into_frame();
 
         debug!(request = ?frame);
 
@@ -423,7 +458,7 @@ impl Subscriber {
     /// Unsubscribe to a list of new channels
     #[instrument(skip(self))]
     pub async fn unsubscribe(&mut self, channels: &[String]) -> crate::Result<()> {
-        let frame = Unsubscribe::new(&channels).into_frame();
+        let frame = Unsubscribe::new(channels).into_frame();
 
         debug!(request = ?frame);
 

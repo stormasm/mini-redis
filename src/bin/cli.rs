@@ -1,26 +1,37 @@
-use mini_redis::{client, DEFAULT_PORT};
+use mini_redis::{clients::Client, DEFAULT_PORT};
 
 use bytes::Bytes;
+use clap::{Parser, Subcommand};
+use std::convert::Infallible;
 use std::num::ParseIntError;
 use std::str;
 use std::time::Duration;
-use structopt::StructOpt;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "mini-redis-cli", version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"), about = "Issue Redis commands")]
+#[derive(Parser, Debug)]
+#[clap(
+    name = "mini-redis-cli",
+    version,
+    author,
+    about = "Issue Redis commands"
+)]
 struct Cli {
-    #[structopt(subcommand)]
+    #[clap(subcommand)]
     command: Command,
 
-    #[structopt(name = "hostname", long = "--host", default_value = "127.0.0.1")]
+    #[clap(name = "hostname", long, default_value = "127.0.0.1")]
     host: String,
 
-    #[structopt(name = "port", long = "--port", default_value = DEFAULT_PORT)]
-    port: String,
+    #[clap(long, default_value_t = DEFAULT_PORT)]
+    port: u16,
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(Subcommand, Debug)]
 enum Command {
+    Ping {
+        /// Message to ping
+        #[clap(value_parser = bytes_from_str)]
+        msg: Option<Bytes>,
+    },
     /// Get the value of key.
     Get {
         /// Name of key to get
@@ -32,11 +43,11 @@ enum Command {
         key: String,
 
         /// Value to set.
-        #[structopt(parse(from_str = bytes_from_str))]
+        #[clap(value_parser = bytes_from_str)]
         value: Bytes,
 
         /// Expire the value after specified amount of time
-        #[structopt(parse(try_from_str = duration_from_ms_str))]
+        #[clap(value_parser = duration_from_ms_str)]
         expires: Option<Duration>,
     },
     ///  Publisher to send a message to a specific channel.
@@ -44,7 +55,7 @@ enum Command {
         /// Name of channel
         channel: String,
 
-        #[structopt(parse(from_str = bytes_from_str))]
+        #[clap(value_parser = bytes_from_str)]
         /// Message to publish
         message: Bytes,
     },
@@ -70,16 +81,24 @@ async fn main() -> mini_redis::Result<()> {
     tracing_subscriber::fmt::try_init()?;
 
     // Parse command line arguments
-    let cli = Cli::from_args();
+    let cli = Cli::parse();
 
     // Get the remote address to connect to
     let addr = format!("{}:{}", cli.host, cli.port);
 
     // Establish a connection
-    let mut client = client::connect(&addr).await?;
+    let mut client = Client::connect(&addr).await?;
 
     // Process the requested command
     match cli.command {
+        Command::Ping { msg } => {
+            let value = client.ping(msg).await?;
+            if let Ok(string) = str::from_utf8(&value) {
+                println!("\"{}\"", string);
+            } else {
+                println!("{:?}", value);
+            }
+        }
         Command::Get { key } => {
             if let Some(value) = client.get(&key).await? {
                 if let Ok(string) = str::from_utf8(&value) {
@@ -108,7 +127,7 @@ async fn main() -> mini_redis::Result<()> {
             println!("OK");
         }
         Command::Publish { channel, message } => {
-            client.publish(&channel, message.into()).await?;
+            client.publish(&channel, message).await?;
             println!("Publish OK");
         }
         Command::Subscribe { channels } => {
@@ -135,6 +154,6 @@ fn duration_from_ms_str(src: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(ms))
 }
 
-fn bytes_from_str(src: &str) -> Bytes {
-    Bytes::from(src.to_string())
+fn bytes_from_str(src: &str) -> Result<Bytes, Infallible> {
+    Ok(Bytes::from(src.to_string()))
 }

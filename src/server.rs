@@ -60,7 +60,6 @@ struct Listener {
     /// complete, all clones of the `Sender` are also dropped. This results in
     /// `shutdown_complete_rx.recv()` completing with `None`. At this point, it
     /// is safe to exit the server process.
-    shutdown_complete_rx: mpsc::Receiver<()>,
     shutdown_complete_tx: mpsc::Sender<()>,
 }
 
@@ -128,7 +127,7 @@ pub async fn run(listener: TcpListener, shutdown: impl Future) {
     // a receiver is needed, the subscribe() method on the sender is used to create
     // one.
     let (notify_shutdown, _) = broadcast::channel(1);
-    let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel(1);
+    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
     // Initialize the listener state
     let mut server = Listener {
@@ -137,7 +136,6 @@ pub async fn run(listener: TcpListener, shutdown: impl Future) {
         limit_connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         notify_shutdown,
         shutdown_complete_tx,
-        shutdown_complete_rx,
     };
 
     // Concurrently run the server and listen for the `shutdown` signal. The
@@ -155,7 +153,7 @@ pub async fn run(listener: TcpListener, shutdown: impl Future) {
     // op completes, its associated `<step to perform with result>` is
     // performed.
     //
-    // The `select! macro is a foundational building block for writing
+    // The `select!` macro is a foundational building block for writing
     // asynchronous Rust. See the API docs for more details:
     //
     // https://docs.rs/tokio/*/tokio/macro.select.html
@@ -181,7 +179,6 @@ pub async fn run(listener: TcpListener, shutdown: impl Future) {
     // explicitly drop `shutdown_transmitter`. This is important, as the
     // `.await` below would otherwise never complete.
     let Listener {
-        mut shutdown_complete_rx,
         shutdown_complete_tx,
         notify_shutdown,
         ..
@@ -227,7 +224,7 @@ impl Listener {
             // to the semaphore.
             //
             // `acquire_owned()` returns `Err` when the semaphore has been
-            // closed. We don't ever close the sempahore, so `unwrap()` is safe.
+            // closed. We don't ever close the semaphore, so `unwrap()` is safe.
             let permit = self
                 .limit_connections
                 .clone()
